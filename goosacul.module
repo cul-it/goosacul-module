@@ -1,0 +1,365 @@
+<?php
+// $Id$
+/**
+ * @file
+ * Module for displaying search results from the Cornell Google Search Appliance
+ * Uses the 'libraries' collection to find results in CUL web pages
+ * @see http://code.google.com/apis/searchappliance/documentation/50/index.html
+ */
+
+/**
+ * note: 11/3/2011 url of search on cornell site changed from
+ *	web.search.cornell.edu to www.cornell.edu/search
+ *  -jgr25
+ */
+ 
+define('QUERY_PARAMETER',"qp");
+define('RESULTS_PER_PAGE',10);
+define('COLLECTION_NAME',"libraries");
+include_once('cul_gsa_search.php');
+
+/**
+ * Implementation of hook_block
+ */
+function goosacul_block($op='list', $delta=0, $edit=array()) {
+	switch ($op) {
+		case 'list':
+			$blocks[0] = array(
+				'info' => t('Google CUL'),
+				'cache' => BLOCK_NO_CACHE,
+				);
+			$blocks[1] = array(
+				'info' => t('Google Library Pages Search'),
+				'cache' => BLOCK_NO_CACHE,
+				);
+			return $blocks;
+		case 'view':
+			switch ($delta) {
+				case 0:
+					$site = "http://library.cornell.edu";
+					$search_all_library_sites = true;
+					$query = "canoe";
+					$res_per_page = 15;
+					$cur_page = 1;
+					
+					$params = _goosacul_form_parameters();
+					
+					$search_label = t(" ");
+					$form = _goosacul_web_search_form_template($search_label, $params);
+		
+					
+					$blocks['subject'] = t('CUL Search');
+					$blocks['content'] = $form . _goosacul_web_search_results($params);
+					break;
+				case 1:
+					$blocks = array(
+						'subject' => t('Search Library Web Pages'),
+						'content' => _goosacul_cse(),
+						);
+					break;
+				}
+			return $blocks;
+		}
+	}
+	
+/**
+ * code to return web form parameters
+ */
+function _goosacul_form_parameters() {
+	$params = array();
+	$legal_params = array( QUERY_PARAMETER, "sitesearch", "q", "submit",
+		"output", "sort", "ie", "client", "oe", "site", "start", "num", "hl", 
+		"lr", "access", "sa");
+	if ($_SERVER['REQUEST_METHOD'] == "POST") {
+		foreach($legal_params as $param) {
+			$params["$param"] = isset($_POST["$param"]) ? $_POST["$param"] : "";
+			}
+		}
+	else if ($_SERVER['REQUEST_METHOD'] == "GET") {
+		// after someone hit's Next or Previous
+		foreach($legal_params as $param) {
+			$params["$param"] = isset($_GET["$param"]) ? $_GET["$param"] : "";
+			}
+		}
+		
+	return $params;
+	}
+	
+/**
+ * code to produce the web form for search
+ */	
+function _goosacul_web_search_form_template($search_label, $params) {
+	$action = request_uri();  //url();		// $_SERVER['PHP_SELF'];
+	$search_query = htmlspecialchars(stripslashes($params[QUERY_PARAMETER]));
+	$siteToSearch = $params["sitesearch"];
+	if ($siteToSearch == 'library') {
+		// after next/previous page there might be a collection string in here
+		$search_query = str_replace(' more:' . COLLECTION_NAME, '', $search_query);
+		}
+	$qp = QUERY_PARAMETER;
+	$output = <<<EOT
+	<div id="goosacul-search-form">
+	
+		<form action="$action" method="post" enctype="application/x-www-form-urlencoded">
+			<input type="hidden" name="q" value="search/cul_gsa" />
+			<div id="goosacul-search-input">
+				<label for="goosacul-search-form-query">$search_label</label><br />
+				<input type="text" id="goosacul-search-form-query" name="$qp" value="$search_query" size="50" maxlength="256" />
+				<input type="submit" id="goosacul-search-form-submit" name="submit" value="go" />
+				<input type="hidden" name="output" value="xml_no_dtd" />
+				<input type="hidden" name="sort" value="" />
+				<input type="hidden" name="ie" value="UTF-8" />
+				<input type="hidden" name="client" value="default_frontend" />
+				<input type="hidden" name="oe" value="UTF-8" />
+				<input type="hidden" name="site" value="libraries" />
+			</div>	
+			<div id="goosacul-search-filters">
+EOT;
+	// set up to check the appropriate radio button
+	$checking = array("thisone" => '', "library" => '', "cornell" => '');
+	switch ($siteToSearch) {
+		case 'thisone' :
+		case 'library' :
+		case 'cornell' :
+			$checking["$siteToSearch"] = 'checked="checked"';
+			break;
+		default :
+			$checking["thisone"] = 'checked="checked"';
+			break;
+		}
+	$output .= '<input type="radio" name="sitesearch" value="thisone" id="goosacul-search-filters1" ' . $checking["thisone"] . "/>\n";
+	$output .= '<label for="goosacul-search-filters1">This Site</label>' . "\n";
+	//$output .= '<input type="radio" name="sitesearch" value="library" id="goosacul-search-filters2" ' . $checking["library"] . "/>\n";
+	//$output .= '<label for="goosacul-search-filters2">Library Web Pages</label>' . "\n";
+	$output .= '<input type="radio" name="sitesearch" value="cornell" id="goosacul-search-filters3" ' . $checking["cornell"] . "/>\n";
+	$output .= '<label for="goosacul-search-filters3">Cornell</label>' . "\n";
+	$output .= '<a href="http://www.cornell.edu/search/"> more options</a>' . "\n";
+	$output .= "</div>\n</form>\n</div>\n<br />";
+	return $output;
+	}
+
+/**
+ * code to produce Google Custom Search 
+ */
+function _goosacul_cse($query_string = '') {
+	$output = <<<EOT
+		<div id="cse" style="width: 100%;">Loading</div>
+		<script src="http://www.google.com/jsapi" type="text/javascript"></script>
+		<script type="text/javascript"> 
+		  google.load('search', '1', {language : 'en'});
+		  google.setOnLoadCallback(function() {
+			var customSearchOptions = {};
+			var googleAnalyticsOptions = {};
+			googleAnalyticsOptions['queryParameter'] = 'search';
+			googleAnalyticsOptions['categoryParameter'] = '';
+			customSearchOptions['googleAnalyticsOptions'] = googleAnalyticsOptions;  var customSearchControl = new google.search.CustomSearchControl(
+			  '006762482862802971692:9b1l3zwintc', customSearchOptions);
+			customSearchControl.setResultSetSize(google.search.Search.FILTERED_CSE_RESULTSET);
+			customSearchControl.draw('cse');
+EOT;
+	$output2 = <<<EOT2
+		  }, true);
+	</script>
+		<link rel="stylesheet" href="http://www.google.com/cse/style/look/default.css" type="text/css" />
+EOT2;
+	if (!empty($query_string)) {
+		$output .= " customSearchControl.execute('$query_string');";
+		}
+	$output .= $output2;
+	return $output;
+	}
+
+/**
+ * code to process & display search results
+ */
+function _goosacul_web_search_results($params) {
+	$output = "";
+	if (!empty($params[QUERY_PARAMETER])) {
+		// search results to display
+		$sitesearch = $params['sitesearch'];		
+		$starting_page = $params['start'];
+		$num_per_page = !empty($params['num']) ? $params['num'] : RESULTS_PER_PAGE;
+		
+		$searcher = new cul_gsa_search();
+		
+		switch("$sitesearch") {
+			case 'thisone' : 
+				$searcher->setSite($_SERVER['SERVER_NAME']); 
+				$searcher->setCollection(COLLECTION_NAME);
+				break;
+			case 'library' :
+				$searcher->setSite(''); 
+				$searcher->setCollection(COLLECTION_NAME);
+				break;
+			default :
+				$searcher->setSite(''); 
+				$searcher->setCollection("default_collection");
+				break;				
+			}
+		
+		$q = $params[QUERY_PARAMETER];
+		$searcher->setStartingResult($starting_page);
+		$searcher->setResultCount($num_per_page);
+		if ($searcher->search($q)) {
+			$output .= "<div id=\"top_sep_bar\">";
+			$total_count = $searcher->getResultsCount();			
+			if ($total_count < 1) {
+				$output .= "Your search for '$q' returned 0 results.\r";
+				$output .= "</div>\r";
+				}
+			else {
+				$result = $searcher->getResults();
+				$search_time = $searcher->getTime();
+				
+				$output .= "Your search for '$q' took $search_time seconds.\r";
+	
+				$starting = $searcher->getStartingResultNumber();
+				$ending = $searcher->getEndingResultNumber();
+				
+				$output .= "Results $starting - $ending:\r";
+			
+				// note: look at NB tag for next/ previous pages
+				$url_next_page = $searcher->getNextURL();
+				$url_previous_page = $searcher->getPreviousURL();
+				
+				if (!empty($url_previous_page)) {
+					$url_previous_page = _goosacul_recode_q_param($url_previous_page, $sitesearch);
+					$output .= "<a href=\"$url_previous_page\">&lt; Previous</a>\r";
+					if (!empty($url_next_page)) $output .= " || ";
+					}
+				if (!empty($url_next_page)) {
+					$url_next_page = _goosacul_recode_q_param($url_next_page, $sitesearch);
+					$output .= "<a href=\"$url_next_page\">Next &gt;</a>\r";
+					}
+					
+				$output .= "</div><p>&nbsp;</p>\r";
+				
+				$output .= "<div id=\"searchresults\">\r";
+				$output .= "<div id=\"googleresults\">\r";
+				
+				$keymatch = $searcher->getKeymatchResults();
+				
+				foreach($keymatch as $kmat) {
+					$output .= '<p class="keymatch">';
+					$output .= '<span class="lk"><a href="' . $kmat['GL'] . '">' . $kmat['GD'] . '</a></span>';
+					$output .= '<span class="kk"> - Key Match</span><br />';
+					$output .= '<span class="a">' . $kmat['GL'] . '</span>';
+					$output .= "</p>\r";
+					}
+
+					
+				$return_name = array (
+					"N" => "result_number",
+					"U" => "url",
+					"T" => "title",
+					"S" => "description"
+					);
+					
+				$named_result = array();
+				foreach ($result as $it) {
+					$new_it = array();
+					foreach ($return_name as $internal => $external) {
+						$new_it[$external] = $it[$internal];
+						}
+					$named_result[] = $new_it;
+					}
+				$results = $named_result;
+				
+				foreach ($results as $result) {
+					$output .= "<p>";
+					$output .= '<span class="gray">' . $result['result_number'] . ".</span> ";
+					$output .= '<a href="' . $result['url'] . '" class="bold">' . $result['title'] . '</a><br />';
+					$output .= $result['description'] . "<br />";
+					$output .= '<span class="url"><a href="' . $result['url'] . '">' . $result['url'] . '</a></span>';
+					$output .= "</li>\r";
+					}
+				
+				$output .= "</div>\r";
+				$output .= "</div>\r";
+				}
+			}
+		else {
+			$output .= $searcher->getError();
+			}
+		}
+	return $output;
+	}
+
+/**
+ * recode the q parameter in this url so Drupal can handle it
+ */
+function _goosacul_recode_q_param($url, $sitesearch_original) {
+	$url_base = substr($url,0,strpos($url,"?") + 1);
+	$query = substr($url, strpos($url,"?") + 1);
+	$parts = explode("&", $query);
+	$new_parts = array();
+	$has_sitesearch = false;
+	foreach ($parts as $part) {
+		list($key,$val) = explode("=",$part);
+		if ($key == "q") {
+			/* 
+			GSA uses ?q=bla for the search string bla, but Drupal uses that also 
+			for it's query string. GSA provided us this query string so we'll recode the q=
+			
+			note: now this is done in cul_gsa_search so it's compatible with unclean urls
+			*/
+			//$key = QUERY_PARAMETER;
+			}
+		else if ($key == "sitesearch") {
+			/*
+			GSA uses the parameter 'sitesearch' differently than this form requires - 
+			recode that so it will properly set the radio buttons 'this site', 
+			'library pages', 'cornell' on input to this form.
+			*/
+			$val = $sitesearch_original;
+			$has_sitesearch = true;
+			}
+		$new_parts[] = "$key=$val";
+		}
+	if (!$has_sitesearch) {
+		$new_parts[] = "sitesearch=" . $sitesearch_original;
+		}
+	$new_query = implode("&",$new_parts);
+	
+	$new_url = $url_base . $new_query;
+	
+	return $new_url;
+	}
+
+/**
+ * Implementation of hook_menu()
+ * this adds a page called 'search/cul_gsa' to any site using this module
+ */
+function goosacul_menu() {
+  	$items = array();
+
+	$items['search/cul_gsa'] = array(
+		'title' => 'Cornell University Library Search',
+		'description' => 'Use Drupal site search or Google Search Appliance to search pages.',
+		'page callback' => 'goosacul_page',
+		'access callback' => TRUE,
+		'type' => MENU_CALLBACK,
+		);	
+		
+	return $items;
+	}
+
+/**
+ * callback function for search page
+ */
+function goosacul_page() {
+	
+	$params = _goosacul_form_parameters();
+	
+	if (!empty($params['sitesearch']) && $params['sitesearch'] == 'thisone') {
+		// use the regular drupal search for searching current site
+		$path = 'search/node/' . (!empty($params['qp']) ? urlencode($params['qp']) : '');
+		drupal_goto($path);
+		}
+	
+	$search_label = t(" ");
+	$output = _goosacul_web_search_form_template($search_label, $params);
+	$output .= _goosacul_web_search_results($params);
+
+	return $output;
+	}

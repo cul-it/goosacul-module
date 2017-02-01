@@ -1,0 +1,6 @@
+;$Id$
+name = "GooSACUL"
+description = "Search Cornell University Library web sites using the Google Search Appliance."
+package = "Cornell University Library"
+core = 6.x
+php = 5.2
